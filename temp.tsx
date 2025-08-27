@@ -10,30 +10,33 @@ import {
 import { SmuiMultiSelect, SmuiCheckbox } from "strats_utils/components";
 import "./CurrencySelector.css";
 
+/** Option shape used by SmuiMultiSelect */
 interface Option {
   value: string;
   label: string;
 }
 
+/** Props from parent (public contract unchanged) */
 interface CurrencySelectorProps {
-  options: string[];
-  selectedCurrencies: string[];
-  setSelectedCurrencies: (currencies: string[]) => void;
-  name: string; // kept for API parity
+  options: string[];                          // e.g. ["USD","GBP",...]
+  selectedCurrencies: string[];               // controlled value from parent
+  setSelectedCurrencies: (c: string[]) => void;
+  name: string;                               // kept for API parity
 }
 
+/** Local form state */
 interface FormData {
   currencies: string[];
-  selectAllSwitch: boolean; // we still keep this field, now driven by the header checkbox
+  selectAll: boolean;                         // driven by the checkbox
 }
 
-function computeAllState(selected: string[], all: string[]) {
+/** Derive tri-state from current selection */
+function getAllState(selected: string[], all: string[]) {
   const total = all.length;
   const sel = selected.length;
-  return {
-    checked: sel > 0 && sel === total,
-    indeterminate: sel > 0 && sel < total,
-  };
+  const checked = sel > 0 && sel === total;
+  const indeterminate = sel > 0 && sel < total;
+  return { checked, indeterminate };
 }
 
 const CurrencySelector: React.FC<CurrencySelectorProps> = ({
@@ -41,53 +44,47 @@ const CurrencySelector: React.FC<CurrencySelectorProps> = ({
   selectedCurrencies,
   setSelectedCurrencies,
 }) => {
-  const allSelectedInitial = selectedCurrencies.length === options.length;
-
+  // RHF setup
   const methods: UseFormReturn<FormData> = useForm<FormData>({
     defaultValues: {
       currencies: selectedCurrencies,
-      selectAllSwitch: allSelectedInitial,
+      selectAll: selectedCurrencies.length === options.length,
     },
   });
 
-  const watchedCurrencies = useWatch({
-    control: methods.control,
-    name: "currencies",
-  });
-  const watchedSelectAll = useWatch({
-    control: methods.control,
-    name: "selectAllSwitch",
-  });
+  // Watch relevant fields
+  const watchCurrencies = useWatch({ control: methods.control, name: "currencies" });
 
-  const smuiOptions: Option[] = React.useMemo(
+  // Map raw strings to Option[]
+  const smuiOptions = React.useMemo<Option[]>(
     () => options.map((opt) => ({ value: opt, label: opt })),
     [options]
   );
 
-  // Chips renderer (2 visible + "+X more")
+  /** Render up to 2 chips, then "+X more" */
   const renderTags = React.useCallback(
     (
       tagValue: Option[],
       getTagProps: (args: { index: number }) => Record<string, unknown>
     ): React.ReactNode => {
       const maxVisible = 2;
-      const visibleTags = tagValue.slice(0, maxVisible);
-      const remainingCount = tagValue.length - maxVisible;
+      const visible = tagValue.slice(0, maxVisible);
+      const remaining = Math.max(tagValue.length - maxVisible, 0);
 
       return (
         <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, alignItems: "center" }}>
-          {visibleTags.map((option, index) => (
+          {visible.map((opt, i) => (
             <Chip
-              {...getTagProps({ index })}
-              key={option.value}
-              label={option.label}
+              {...getTagProps({ index: i })}
+              key={opt.value}
+              label={opt.label}
               size="small"
               className="currency-chip"
             />
           ))}
-          {remainingCount > 0 && (
+          {remaining > 0 && (
             <Chip
-              label={`+${remainingCount} more`}
+              label={`+${remaining} more`}
               size="small"
               className="currency-chip-more"
               variant="outlined"
@@ -99,98 +96,72 @@ const CurrencySelector: React.FC<CurrencySelectorProps> = ({
     []
   );
 
-  // Sync parent when internal selection changes; keep checkbox state aligned
+  /** Keep parent prop in sync when internal selection changes */
   React.useEffect(() => {
-    const arr = Array.isArray(watchedCurrencies)
-      ? (watchedCurrencies as string[])
-      : [];
-    setSelectedCurrencies(arr);
+    const curr = Array.isArray(watchCurrencies) ? (watchCurrencies as string[]) : [];
+    setSelectedCurrencies(curr);
 
-    const { checked } = computeAllState(arr, options);
-    if (checked !== watchedSelectAll) {
-      methods.setValue("selectAllSwitch", checked, {
+    // sync checkbox state (tri-state: we set 'checked' only; 'indeterminate' is visual)
+    const { checked } = getAllState(curr, options);
+    if (methods.getValues("selectAll") !== checked) {
+      methods.setValue("selectAll", checked, { shouldValidate: false, shouldTouch: false, shouldDirty: false });
+    }
+  }, [watchCurrencies, options, methods, setSelectedCurrencies]);
+
+  /** Reflect parent updates back into the form (no loops) */
+  React.useEffect(() => {
+    const curr = methods.getValues("currencies");
+    // only update if different, to avoid extra renders
+    const same =
+      Array.isArray(curr) &&
+      curr.length === selectedCurrencies.length &&
+      curr.every((v, i) => v === selectedCurrencies[i]);
+
+    if (!same) {
+      methods.setValue("currencies", selectedCurrencies, {
         shouldValidate: false,
         shouldTouch: false,
+        shouldDirty: false,
       });
     }
-  }, [watchedCurrencies, watchedSelectAll, options, methods, setSelectedCurrencies]);
 
-  // If parent updates selectedCurrencies, reflect here
-  React.useEffect(() => {
-    methods.setValue("currencies", selectedCurrencies, {
-      shouldValidate: false,
-      shouldTouch: false,
-      shouldDirty: false,
-    });
-    const { checked } = computeAllState(selectedCurrencies, options);
-    methods.setValue("selectAllSwitch", checked, {
-      shouldValidate: false,
-      shouldTouch: false,
-      shouldDirty: false,
-    });
-  }, [selectedCurrencies, options, methods]);
+    const newAll = selectedCurrencies.length === options.length;
+    if (methods.getValues("selectAll") !== newAll) {
+      methods.setValue("selectAll", newAll, {
+        shouldValidate: false,
+        shouldTouch: false,
+        shouldDirty: false,
+      });
+    }
+  }, [selectedCurrencies, options.length, methods]);
 
-  // Render a sticky header for the dropdown list with our SmuiCheckbox
-  const renderListboxWithHeader = React.useCallback(
-    (listbox: React.ReactNode) => {
-      const selected = methods.getValues("currencies") ?? [];
-      const { checked, indeterminate } = computeAllState(selected, options);
-
-      // SmuiCheckbox is RHF-bound, so change its value via setValue AND also
-      // update the currencies list to actually perform the select-all action.
-      const onToggleAll = (nextChecked: boolean) => {
-        methods.setValue("selectAllSwitch", nextChecked, { shouldTouch: true });
-        if (nextChecked) {
-          methods.setValue("currencies", [...options], {
-            shouldDirty: true,
-            shouldTouch: true,
-          });
+  /** Toggle handler for the subtle "Select all" checkbox */
+  const handleSelectAllChange = React.useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const isChecked = event.target.checked;
+      if (isChecked) {
+        if (methods.getValues("currencies").length !== options.length) {
+          methods.setValue("currencies", [...options], { shouldDirty: true, shouldTouch: true });
           setSelectedCurrencies(options);
-        } else {
-          methods.setValue("currencies", [], {
-            shouldDirty: true,
-            shouldTouch: true,
-          });
+        }
+      } else {
+        if (methods.getValues("currencies").length !== 0) {
+          methods.setValue("currencies", [], { shouldDirty: true, shouldTouch: true });
           setSelectedCurrencies([]);
         }
-      };
-
-      return (
-        <div>
-          <div
-            className="select-all-header"
-            style={{
-              position: "sticky",
-              top: 0,
-              zIndex: 1,
-              background: "var(--mui-popper-bg, #fff)",
-              borderBottom: "1px solid rgba(0,0,0,0.08)",
-              padding: "6px 10px",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-            }}
-            onMouseDown={(e) => e.stopPropagation()} // keep dropdown open
-          >
-            <SmuiCheckbox<FormData>
-              name="selectAllSwitch"
-              label={checked ? "Deselect all" : indeterminate ? "Select all (partial)" : "Select all"}
-              // We need to reflect the tri-state; MUI supports 'indeterminate' prop on Checkbox,
-              // your SmuiCheckbox wrapper forwards props via ...rest, so we pass it via 'rest' props.
-              // @ts-expect-error: extra prop forwarded through SmuiCheckbox to MUI Checkbox
-              indeterminate={indeterminate}
-              onChange={(_, value?: boolean) => {
-                // Some wrappers pass (event) only; handle both signatures safely:
-                if (typeof value === "boolean") onToggleAll(value);
-                else onToggleAll(!checked);
-              }}
-            />
-          </div>
-          {listbox}
-        </div>
-      );
+      }
+      // RHF field mirrors the visual checked state
+      if (methods.getValues("selectAll") !== isChecked) {
+        methods.setValue("selectAll", isChecked, { shouldTouch: true });
+      }
     },
     [methods, options, setSelectedCurrencies]
+  );
+
+  // Compute tri-state for the checkbox
+  const { checked: allChecked, indeterminate } = getAllState(
+    methods.getValues("currencies") ?? [],
+    options
   );
 
   return (
@@ -201,13 +172,25 @@ const CurrencySelector: React.FC<CurrencySelectorProps> = ({
           label="Select Currencies"
           options={smuiOptions}
           renderTags={renderTags}
-          // Put the subtle "Select all" checkbox into the dropdown panel
-          renderListbox={renderListboxWithHeader as any}
           sx={{
             "& .MuiAutocomplete-option": { minHeight: "24px" },
             "& .MuiAutocomplete-inputRoot": { minHeight: "56px", padding: "8px 12px" },
           }}
         />
+
+        {/* Subtle Select-All control (compact checkbox below the field) */}
+        <Box
+          className="select-all-checkbox-container"
+          sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5 }}
+        >
+          <SmuiCheckbox<FormData>
+            name="selectAll"
+            label={allChecked ? "Deselect all" : "Select all"}
+            indeterminate={indeterminate}   // forwarded to MUI Checkbox
+            onChange={handleSelectAllChange}
+            size="small"
+          />
+        </Box>
       </Box>
     </FormProvider>
   );
