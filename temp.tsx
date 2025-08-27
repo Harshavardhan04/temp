@@ -1,11 +1,10 @@
-// AGGrid.tsx
+// AGGrid.tsx (AG Grid v31+)
 import React, { useMemo, useState, useCallback } from "react";
 import { useSelector } from "react-redux";
 import { AgGridReact } from "ag-grid-react";
 import {
   ColDef,
   GridApi,
-  ColumnApi,
   GridOptions,
   GridReadyEvent,
 } from "ag-grid-community";
@@ -15,7 +14,6 @@ import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-alpine.css";
 import "ag-grid-community/styles/ag-theme-alpine-dark.css";
 
-// ---------- Types ----------
 interface AGGridProps {
   rows: any[];
   columns: ColDef[];
@@ -23,12 +21,9 @@ interface AGGridProps {
 }
 
 interface RootState {
-  root: {
-    isDarkMode: boolean;
-  };
+  root: { isDarkMode: boolean };
 }
 
-// ---------- Reusable SideBar config ----------
 const sideBarConfig = {
   toolPanels: [
     {
@@ -49,20 +44,14 @@ const sideBarConfig = {
   defaultToolPanel: "agColumnsToolPanel",
 } as const;
 
-// ---------- Loading overlay as JSX ----------
 const LoadingOverlayComponent: React.FC = () => (
   <span className="ag-overlay-loading-center">Loading...</span>
 );
 
-// ============================================
-
 const AGGrid: React.FC<AGGridProps> = ({ rows, columns, loading = false }) => {
-  const isDarkMode = useSelector((state: RootState) => state.root.isDarkMode);
-
+  const isDarkMode = useSelector((s: RootState) => s.root.isDarkMode);
   const [gridApi, setGridApi] = useState<GridApi | null>(null);
-  const [columnApi, setColumnApi] = useState<ColumnApi | null>(null);
 
-  // Default column defs
   const defaultColDef: ColDef = useMemo(
     () => ({
       sortable: true,
@@ -75,7 +64,6 @@ const AGGrid: React.FC<AGGridProps> = ({ rows, columns, loading = false }) => {
     []
   );
 
-  // Grid options
   const gridOptions: GridOptions = useMemo(
     () => ({
       pagination: true,
@@ -88,7 +76,6 @@ const AGGrid: React.FC<AGGridProps> = ({ rows, columns, loading = false }) => {
     []
   );
 
-  // Hide the id column if present
   const processedColumns: ColDef[] = useMemo(
     () =>
       columns.map((col) => ({
@@ -98,13 +85,12 @@ const AGGrid: React.FC<AGGridProps> = ({ rows, columns, loading = false }) => {
     [columns]
   );
 
-  // onGridReady
-  const onGridReady = useCallback((params: GridReadyEvent) => {
-    setGridApi(params.api);
-    setColumnApi(params.columnApi);
+  const onGridReady = useCallback((e: GridReadyEvent) => {
+    setGridApi(e.api);
+    // Example of former ColumnApi usage, now via GridApi:
+    // e.api.applyColumnState({ state: [{ colId: 'id', hide: true }] });
   }, []);
 
-  // CSS variables for theming (type-safe-ish)
   const themeVars: React.CSSProperties = {
     ["--ag-header-background-color" as any]: isDarkMode ? "#1d1a1a" : "#AE1A1A",
     ["--ag-header-foreground-color" as any]: "#ffffff",
@@ -135,9 +121,9 @@ const AGGrid: React.FC<AGGridProps> = ({ rows, columns, loading = false }) => {
           gridOptions={gridOptions}
           onGridReady={onGridReady}
           loadingOverlayComponent={LoadingOverlayComponent}
-          rowGroupPanelShow={"always"}
+          rowGroupPanelShow="always"
           sideBar={sideBarConfig}
-          suppressDragLeaveHidesColumns={true}
+          suppressDragLeaveHidesColumns
         />
       </div>
     </div>
