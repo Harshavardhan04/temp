@@ -1,5 +1,5 @@
-// AGGrid.tsx (AG Grid v31+)
-import React, { useMemo, useState, useCallback } from "react";
+// AGGrid.tsx
+import React, { useMemo, useRef, useCallback, useState } from "react";
 import { useSelector } from "react-redux";
 import { AgGridReact } from "ag-grid-react";
 import {
@@ -14,14 +14,15 @@ import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-alpine.css";
 import "ag-grid-community/styles/ag-theme-alpine-dark.css";
 
+interface RootState {
+  root: { isDarkMode: boolean };
+}
+
 interface AGGridProps {
   rows: any[];
   columns: ColDef[];
   loading?: boolean;
-}
-
-interface RootState {
-  root: { isDarkMode: boolean };
+  height?: string; // container height
 }
 
 const sideBarConfig = {
@@ -48,14 +49,28 @@ const LoadingOverlayComponent: React.FC = () => (
   <span className="ag-overlay-loading-center">Loading...</span>
 );
 
-const AGGrid: React.FC<AGGridProps> = ({ rows, columns, loading = false }) => {
+const NoRowsOverlayComponent: React.FC = () => (
+  <span className="ag-overlay-no-rows-center">No Rows To Show</span>
+);
+
+const AGGrid: React.FC<AGGridProps> = ({
+  rows,
+  columns,
+  loading = false,
+  height = "calc(100vh - 100px)",
+}) => {
   const isDarkMode = useSelector((s: RootState) => s.root.isDarkMode);
-  const [gridApi, setGridApi] = useState<GridApi | null>(null);
+
+  // Use refs (not state) to avoid extra renders
+  const gridApiRef = useRef<GridApi | null>(null);
+
+  const [quickFilter, setQuickFilter] = useState("");
 
   const defaultColDef: ColDef = useMemo(
     () => ({
       sortable: true,
       filter: true,
+      floatingFilter: true, // under-header inputs
       resizable: true,
       flex: 1,
       minWidth: 100,
@@ -72,25 +87,38 @@ const AGGrid: React.FC<AGGridProps> = ({ rows, columns, loading = false }) => {
       enableRangeSelection: true,
       rowSelection: "multiple",
       animateRows: true,
+      cacheQuickFilter: true,
     }),
     []
   );
 
-  const processedColumns: ColDef[] = useMemo(
+  // Hide 'id' column by default, keep other flags intact
+  const columnDefsMemo = useMemo<ColDef[]>(
     () =>
-      columns.map((col) => ({
-        ...col,
-        hide: col.field === "id" ? true : !!col.hide,
+      columns.map((c) => ({
+        ...c,
+        hide: c.field === "id" ? true : !!c.hide,
       })),
     [columns]
   );
 
-  const onGridReady = useCallback((e: GridReadyEvent) => {
-    setGridApi(e.api);
-    // Example of former ColumnApi usage, now via GridApi:
-    // e.api.applyColumnState({ state: [{ colId: 'id', hide: true }] });
-  }, []);
+  const rowDataMemo = useMemo(() => rows, [rows]);
 
+  const onGridReady = useCallback((e: GridReadyEvent) => {
+    gridApiRef.current = e.api;
+    if (quickFilter) e.api.setQuickFilter(quickFilter);
+    if (loading) e.api.showLoadingOverlay();
+    else e.api.hideOverlay();
+    // Example of column ops (Column API migrated to Grid API):
+    // e.api.applyColumnState({ state: [{ colId: 'id', hide: true }] });
+  }, [quickFilter, loading]);
+
+  const getRowId = useCallback(
+    (p: { data: any }) => String(p.data?.id ?? p.data?.ID ?? p.data?._id ?? Math.random()),
+    []
+  );
+
+  // Theme variables
   const themeVars: React.CSSProperties = {
     ["--ag-header-background-color" as any]: isDarkMode ? "#1d1a1a" : "#AE1A1A",
     ["--ag-header-foreground-color" as any]: "#ffffff",
@@ -101,28 +129,46 @@ const AGGrid: React.FC<AGGridProps> = ({ rows, columns, loading = false }) => {
     ["--ag-background-color" as any]: isDarkMode ? "#333333" : "#ffffff",
   };
 
+  // Keep quick filter in sync
+  const onQuickFilterChange = (v: string) => {
+    setQuickFilter(v);
+    gridApiRef.current?.setQuickFilter(v);
+  };
+
   return (
     <div
       style={{
-        height: "calc(100vh - 100px)",
+        height,
         overflow: "auto",
-        paddingRight: "5px",
+        paddingRight: 5,
         boxSizing: "border-box",
       }}
     >
+      {/* Optional quick filter input (remove if not needed) */}
+      <div style={{ marginBottom: 8 }}>
+        <input
+          placeholder="Quick filter…"
+          value={quickFilter}
+          onChange={(e) => onQuickFilterChange(e.target.value)}
+          style={{ width: 240, padding: 6 }}
+        />
+      </div>
+
       <div
         className={isDarkMode ? "ag-theme-alpine-dark" : "ag-theme-alpine"}
-        style={{ width: "100%", ...themeVars }}
+        style={{ width: "100%", height: "100%", ...themeVars }}
       >
         <AgGridReact
-          rowData={rows}
-          columnDefs={processedColumns}
+          rowData={rowDataMemo}
+          columnDefs={columnDefsMemo}
           defaultColDef={defaultColDef}
           gridOptions={gridOptions}
           onGridReady={onGridReady}
-          loadingOverlayComponent={LoadingOverlayComponent}
-          rowGroupPanelShow="always"
           sideBar={sideBarConfig}
+          rowGroupPanelShow="always"
+          loadingOverlayComponent={LoadingOverlayComponent}
+          noRowsOverlayComponent={NoRowsOverlayComponent}
+          getRowId={getRowId}
           suppressDragLeaveHidesColumns
         />
       </div>
