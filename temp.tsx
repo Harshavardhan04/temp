@@ -7,84 +7,118 @@ import {
   useWatch,
   type UseFormReturn,
 } from "react-hook-form";
-import { SmuiMultiSelect, SmuiCheckbox } from "strats_utils/components";
+import { SmuiMultiSelect, SmuiSwitch } from "strats_utils/components";
 import "./CurrencySelector.css";
 
-/** Option shape used by SmuiMultiSelect */
+/** Option shape used by the SmuiMultiSelect */
 interface Option {
   value: string;
   label: string;
 }
 
-/** Props from parent (public contract unchanged) */
+/** Props from parent (unchanged public contract) */
 interface CurrencySelectorProps {
-  options: string[];                          // e.g. ["USD","GBP",...]
-  selectedCurrencies: string[];               // controlled value from parent
-  setSelectedCurrencies: (c: string[]) => void;
-  name: string;                               // kept for API parity
+  /** List of available currency codes (e.g., ["USD","GBP",...]) */
+  options: string[];
+  /** Current selected currency codes */
+  selectedCurrencies: string[];
+  /** Upstream setter to sync selection back to parent */
+  setSelectedCurrencies: (currencies: string[]) => void;
+  /** Name displayed in some contexts (kept for API parity) */
+  name: string;
 }
 
-/** Local form state */
+/** Form values handled locally via RHF */
 interface FormData {
   currencies: string[];
-  selectAll: boolean;                         // driven by the checkbox
-}
-
-/** Derive tri-state from current selection */
-function getAllState(selected: string[], all: string[]) {
-  const total = all.length;
-  const sel = selected.length;
-  const checked = sel > 0 && sel === total;
-  const indeterminate = sel > 0 && sel < total;
-  return { checked, indeterminate };
+  selectAllSwitch: boolean;
 }
 
 const CurrencySelector: React.FC<CurrencySelectorProps> = ({
   options,
   selectedCurrencies,
   setSelectedCurrencies,
+  name,
 }) => {
-  // RHF setup
+  // Determine if all currencies are currently selected
+  const allSelectedInitial = selectedCurrencies.length === options.length;
+
+  // RHF setup with initial defaults
   const methods: UseFormReturn<FormData> = useForm<FormData>({
     defaultValues: {
       currencies: selectedCurrencies,
-      selectAll: selectedCurrencies.length === options.length,
+      selectAllSwitch: allSelectedInitial,
     },
   });
 
-  // Watch relevant fields
-  const watchCurrencies = useWatch({ control: methods.control, name: "currencies" });
+  // Watch relevant fields (cleaner than subscribe/unsubscribe)
+  const watchedCurrencies = useWatch({
+    control: methods.control,
+    name: "currencies",
+  });
+  const watchedSelectAll = useWatch({
+    control: methods.control,
+    name: "selectAllSwitch",
+  });
 
-  // Map raw strings to Option[]
-  const smuiOptions = React.useMemo<Option[]>(
+  // Map raw string options to {value,label} for SmuiMultiSelect
+  const smuiOptions: Option[] = React.useMemo(
     () => options.map((opt) => ({ value: opt, label: opt })),
     [options]
   );
 
-  /** Render up to 2 chips, then "+X more" */
+  /** Handle Select All / Deselect All toggle */
+  const handleSwitchChange = React.useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const isChecked = event.target.checked;
+
+      if (isChecked) {
+        // select all
+        setSelectedCurrencies(options);
+        methods.setValue("currencies", [...options], {
+          shouldTouch: true,
+          shouldDirty: true,
+        });
+      } else {
+        // deselect all
+        setSelectedCurrencies([]);
+        methods.setValue("currencies", [], {
+          shouldTouch: true,
+          shouldDirty: true,
+        });
+      }
+
+      methods.setValue("selectAllSwitch", isChecked, {
+        shouldTouch: true,
+      });
+    },
+    [methods, options, setSelectedCurrencies]
+  );
+
+  /** Render limited chips with a "+X more" chip */
   const renderTags = React.useCallback(
     (
       tagValue: Option[],
       getTagProps: (args: { index: number }) => Record<string, unknown>
     ): React.ReactNode => {
-      const maxVisible = 2;
-      const visible = tagValue.slice(0, maxVisible);
-      const remaining = Math.max(tagValue.length - maxVisible, 0);
+      const maxVisible = 2; // show first 2
+      const visibleTags = tagValue.slice(0, maxVisible);
+      const remainingCount = tagValue.length - maxVisible;
 
       return (
         <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, alignItems: "center" }}>
-          {visible.map((opt, i) => (
+          {visibleTags.map((option, index) => (
             <Chip
-              {...getTagProps({ index: i })}
-              key={opt.value}
-              label={opt.label}
+              {...getTagProps({ index })}
+              key={option.value}
+              label={option.label}
               size="small"
               className="currency-chip"
             />
           ))}
-          {remaining > 0 && (
+          {remainingCount > 0 && (
             <Chip
-              label={`+${remaining} more`}
+              label={`+${remainingCount} more`}
               size="small"
               className="currency-chip-more"
               variant="outlined"
@@ -96,73 +130,46 @@ const CurrencySelector: React.FC<CurrencySelectorProps> = ({
     []
   );
 
-  /** Keep parent prop in sync when internal selection changes */
+  /** Keep parent in sync when internal selection changes */
   React.useEffect(() => {
-    const curr = Array.isArray(watchCurrencies) ? (watchCurrencies as string[]) : [];
-    setSelectedCurrencies(curr);
-
-    // sync checkbox state (tri-state: we set 'checked' only; 'indeterminate' is visual)
-    const { checked } = getAllState(curr, options);
-    if (methods.getValues("selectAll") !== checked) {
-      methods.setValue("selectAll", checked, { shouldValidate: false, shouldTouch: false, shouldDirty: false });
+    if (Array.isArray(watchedCurrencies)) {
+      // Ensure string[] (SmuiMultiSelect provides values as strings)
+      setSelectedCurrencies(watchedCurrencies as string[]);
     }
-  }, [watchCurrencies, options, methods, setSelectedCurrencies]);
 
-  /** Reflect parent updates back into the form (no loops) */
-  React.useEffect(() => {
-    const curr = methods.getValues("currencies");
-    // only update if different, to avoid extra renders
-    const same =
-      Array.isArray(curr) &&
-      curr.length === selectedCurrencies.length &&
-      curr.every((v, i) => v === selectedCurrencies[i]);
+    // Auto-sync the switch when user manually selects/deselects
+    const allSelectedNow =
+      Array.isArray(watchedCurrencies) &&
+      watchedCurrencies.length === options.length;
 
-    if (!same) {
-      methods.setValue("currencies", selectedCurrencies, {
+    if (allSelectedNow !== watchedSelectAll) {
+      methods.setValue("selectAllSwitch", allSelectedNow, {
         shouldValidate: false,
         shouldTouch: false,
-        shouldDirty: false,
       });
     }
+  }, [
+    watchedCurrencies,
+    watchedSelectAll,
+    options.length,
+    methods,
+    setSelectedCurrencies,
+  ]);
 
-    const newAll = selectedCurrencies.length === options.length;
-    if (methods.getValues("selectAll") !== newAll) {
-      methods.setValue("selectAll", newAll, {
-        shouldValidate: false,
-        shouldTouch: false,
-        shouldDirty: false,
-      });
-    }
+  /** If parent changes selectedCurrencies prop, update the form */
+  React.useEffect(() => {
+    methods.setValue("currencies", selectedCurrencies, {
+      shouldValidate: false,
+      shouldTouch: false,
+      shouldDirty: false,
+    });
+    const allSelected = selectedCurrencies.length === options.length;
+    methods.setValue("selectAllSwitch", allSelected, {
+      shouldValidate: false,
+      shouldTouch: false,
+      shouldDirty: false,
+    });
   }, [selectedCurrencies, options.length, methods]);
-
-  /** Toggle handler for the subtle "Select all" checkbox */
-  const handleSelectAllChange = React.useCallback(
-    (event: React.ChangeEvent<HTMLInputElement>) => {
-      const isChecked = event.target.checked;
-      if (isChecked) {
-        if (methods.getValues("currencies").length !== options.length) {
-          methods.setValue("currencies", [...options], { shouldDirty: true, shouldTouch: true });
-          setSelectedCurrencies(options);
-        }
-      } else {
-        if (methods.getValues("currencies").length !== 0) {
-          methods.setValue("currencies", [], { shouldDirty: true, shouldTouch: true });
-          setSelectedCurrencies([]);
-        }
-      }
-      // RHF field mirrors the visual checked state
-      if (methods.getValues("selectAll") !== isChecked) {
-        methods.setValue("selectAll", isChecked, { shouldTouch: true });
-      }
-    },
-    [methods, options, setSelectedCurrencies]
-  );
-
-  // Compute tri-state for the checkbox
-  const { checked: allChecked, indeterminate } = getAllState(
-    methods.getValues("currencies") ?? [],
-    options
-  );
 
   return (
     <FormProvider {...methods}>
@@ -171,6 +178,7 @@ const CurrencySelector: React.FC<CurrencySelectorProps> = ({
           name="currencies"
           label="Select Currencies"
           options={smuiOptions}
+          // custom tags renderer with "+X more"
           renderTags={renderTags}
           sx={{
             "& .MuiAutocomplete-option": { minHeight: "24px" },
@@ -178,17 +186,13 @@ const CurrencySelector: React.FC<CurrencySelectorProps> = ({
           }}
         />
 
-        {/* Subtle Select-All control (compact checkbox below the field) */}
-        <Box
-          className="select-all-checkbox-container"
-          sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5 }}
-        >
-          <SmuiCheckbox<FormData>
-            name="selectAll"
-            label={allChecked ? "Deselect all" : "Select all"}
-            indeterminate={indeterminate}   // forwarded to MUI Checkbox
-            onChange={handleSelectAllChange}
-            size="small"
+        {/* Select All / Deselect All Toggle */}
+        <Box className="select-all-switch-container">
+          <SmuiSwitch<FormData>
+            name="selectAllSwitch"
+            left_label="Deselect All"
+            right_label="Select All"
+            handleChange={handleSwitchChange}
           />
         </Box>
       </Box>
