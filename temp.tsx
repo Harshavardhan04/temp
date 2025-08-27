@@ -1,199 +1,203 @@
-// AGGrid.tsx (AG Grid v32+)
-import React, {
-  useMemo,
-  useRef,
-  useCallback,
-  useState,
-  useEffect,
-} from "react";
-import { useSelector } from "react-redux";
-import { AgGridReact } from "ag-grid-react";
+// CurrencySelector.tsx
+import React from "react";
+import { Box, Chip } from "@mui/material";
 import {
-  ColDef,
-  GridApi,
-  GridOptions,
-  GridReadyEvent,
-  GetRowIdParams,
-} from "ag-grid-community";
+  FormProvider,
+  useForm,
+  useWatch,
+  type UseFormReturn,
+} from "react-hook-form";
+import { SmuiMultiSelect, SmuiSwitch } from "strats_utils/components";
+import "./CurrencySelector.css";
 
-import "ag-grid-enterprise";
-import "ag-grid-community/styles/ag-grid.css";
-import "ag-grid-community/styles/ag-theme-alpine.css";
-import "ag-grid-community/styles/ag-theme-alpine-dark.css";
-
-interface RootState {
-  root: { isDarkMode: boolean };
+/** Option shape used by the SmuiMultiSelect */
+interface Option {
+  value: string;
+  label: string;
 }
 
-interface AGGridProps {
-  rows: any[];
-  columns: ColDef[];
-  loading?: boolean;
-  height?: string; // container height (CSS)
+/** Props from parent (unchanged public contract) */
+interface CurrencySelectorProps {
+  /** List of available currency codes (e.g., ["USD","GBP",...]) */
+  options: string[];
+  /** Current selected currency codes */
+  selectedCurrencies: string[];
+  /** Upstream setter to sync selection back to parent */
+  setSelectedCurrencies: (currencies: string[]) => void;
+  /** Name displayed in some contexts (kept for API parity) */
+  name: string;
 }
 
-// --- Side bar config (Columns + Filters) ---
-const sideBarConfig = {
-  toolPanels: [
-    {
-      id: "columns",
-      labelDefault: "Columns",
-      labelKey: "columns",
-      iconKey: "columns",
-      toolPanel: "agColumnsToolPanel",
-    },
-    {
-      id: "filters",
-      labelDefault: "Filters",
-      labelKey: "filters",
-      iconKey: "filter",
-      toolPanel: "agFiltersToolPanel",
-    },
-  ],
-  defaultToolPanel: "agColumnsToolPanel",
-} as const;
+/** Form values handled locally via RHF */
+interface FormData {
+  currencies: string[];
+  selectAllSwitch: boolean;
+}
 
-// --- Overlays (optional) ---
-const LoadingOverlayComponent: React.FC = () => (
-  <span className="ag-overlay-loading-center">Loading...</span>
-);
-const NoRowsOverlayComponent: React.FC = () => (
-  <span className="ag-overlay-no-rows-center">No Rows To Show</span>
-);
-
-const AGGrid: React.FC<AGGridProps> = ({
-  rows,
-  columns,
-  loading = false,
-  height = "calc(100vh - 100px)",
+const CurrencySelector: React.FC<CurrencySelectorProps> = ({
+  options,
+  selectedCurrencies,
+  setSelectedCurrencies,
+  name,
 }) => {
-  const isDarkMode = useSelector((s: RootState) => s.root.isDarkMode);
+  // Determine if all currencies are currently selected
+  const allSelectedInitial = selectedCurrencies.length === options.length;
 
-  // Grid API (useRef to avoid re-renders)
-  const gridApiRef = useRef<GridApi | null>(null);
+  // RHF setup with initial defaults
+  const methods: UseFormReturn<FormData> = useForm<FormData>({
+    defaultValues: {
+      currencies: selectedCurrencies,
+      selectAllSwitch: allSelectedInitial,
+    },
+  });
 
-  // Quick filter text (optional input below)
-  const [quickFilter, setQuickFilter] = useState("");
+  // Watch relevant fields (cleaner than subscribe/unsubscribe)
+  const watchedCurrencies = useWatch({
+    control: methods.control,
+    name: "currencies",
+  });
+  const watchedSelectAll = useWatch({
+    control: methods.control,
+    name: "selectAllSwitch",
+  });
 
-  // Classic header with dropdown filters (no floating filters)
-  const defaultColDef: ColDef = useMemo(
-    () => ({
-      sortable: true,
-      filter: true, // enables column filter menu
-      // floatingFilter: false, // <-- default is false; omit for one-row header
-      resizable: true,
-      flex: 1,
-      minWidth: 100,
-      suppressMenuHide: true, // keep menu visible
-    }),
+  // Map raw string options to {value,label} for SmuiMultiSelect
+  const smuiOptions: Option[] = React.useMemo(
+    () => options.map((opt) => ({ value: opt, label: opt })),
+    [options]
+  );
+
+  /** Handle Select All / Deselect All toggle */
+  const handleSwitchChange = React.useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const isChecked = event.target.checked;
+
+      if (isChecked) {
+        // select all
+        setSelectedCurrencies(options);
+        methods.setValue("currencies", [...options], {
+          shouldTouch: true,
+          shouldDirty: true,
+        });
+      } else {
+        // deselect all
+        setSelectedCurrencies([]);
+        methods.setValue("currencies", [], {
+          shouldTouch: true,
+          shouldDirty: true,
+        });
+      }
+
+      methods.setValue("selectAllSwitch", isChecked, {
+        shouldTouch: true,
+      });
+    },
+    [methods, options, setSelectedCurrencies]
+  );
+
+  /** Render limited chips with a "+X more" chip */
+  const renderTags = React.useCallback(
+    (
+      tagValue: Option[],
+      getTagProps: (args: { index: number }) => Record<string, unknown>
+    ): React.ReactNode => {
+      const maxVisible = 2; // show first 2
+      const visibleTags = tagValue.slice(0, maxVisible);
+      const remainingCount = tagValue.length - maxVisible;
+
+      return (
+        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, alignItems: "center" }}>
+          {visibleTags.map((option, index) => (
+            <Chip
+              {...getTagProps({ index })}
+              key={option.value}
+              label={option.label}
+              size="small"
+              className="currency-chip"
+            />
+          ))}
+          {remainingCount > 0 && (
+            <Chip
+              label={`+${remainingCount} more`}
+              size="small"
+              className="currency-chip-more"
+              variant="outlined"
+            />
+          )}
+        </Box>
+      );
+    },
     []
   );
 
-  const gridOptions: GridOptions = useMemo(
-    () => ({
-      pagination: true,
-      paginationPageSize: 25,
-      paginationPageSizeSelector: [25, 50, 100],
-      enableRangeSelection: true,
-      rowSelection: "multiple",
-      animateRows: true,
-      cacheQuickFilter: true,
-      // v32 overlays are controlled via 'loading' option
-      loading: loading,
-      quickFilterText: quickFilter,
-    }),
-    // base options don’t change; 'loading'/'quickFilterText' are updated via setGridOption below
-    []
-  );
+  /** Keep parent in sync when internal selection changes */
+  React.useEffect(() => {
+    if (Array.isArray(watchedCurrencies)) {
+      // Ensure string[] (SmuiMultiSelect provides values as strings)
+      setSelectedCurrencies(watchedCurrencies as string[]);
+    }
 
-  // Prepare column defs (hide 'id' by default if present)
-  const columnDefsMemo = useMemo<ColDef[]>(
-    () =>
-      columns.map((c) => ({
-        ...c,
-        hide: c.field === "id" ? true : !!c.hide,
-      })),
-    [columns]
-  );
+    // Auto-sync the switch when user manually selects/deselects
+    const allSelectedNow =
+      Array.isArray(watchedCurrencies) &&
+      watchedCurrencies.length === options.length;
 
-  const rowDataMemo = useMemo(() => rows, [rows]);
+    if (allSelectedNow !== watchedSelectAll) {
+      methods.setValue("selectAllSwitch", allSelectedNow, {
+        shouldValidate: false,
+        shouldTouch: false,
+      });
+    }
+  }, [
+    watchedCurrencies,
+    watchedSelectAll,
+    options.length,
+    methods,
+    setSelectedCurrencies,
+  ]);
 
-  const onGridReady = useCallback((e: GridReadyEvent) => {
-    gridApiRef.current = e.api;
-    // initialize runtime options (v32 style)
-    e.api.setGridOption("loading", loading);
-    if (quickFilter) e.api.setGridOption("quickFilterText", quickFilter);
-    // Example: former ColumnApi calls now via GridApi
-    // e.api.applyColumnState({ state: [{ colId: 'id', hide: true }] });
-  }, [loading, quickFilter]);
-
-  // Keep grid in sync when props/state change after ready
-  useEffect(() => {
-    if (!gridApiRef.current) return;
-    gridApiRef.current.setGridOption("loading", loading);
-  }, [loading]);
-
-  useEffect(() => {
-    if (!gridApiRef.current) return;
-    gridApiRef.current.setGridOption("quickFilterText", quickFilter);
-  }, [quickFilter]);
-
-  // v32-typed getRowId for stable updates
-  const getRowId = useCallback((p: GetRowIdParams<any>) => {
-    const d = p.data;
-    return String(d?.id ?? d?.ID ?? d?._id ?? Math.random());
-  }, []);
-
-  // Theme variables (header/rows)
-  const themeVars: React.CSSProperties = {
-    ["--ag-header-background-color" as any]: isDarkMode ? "#1d1a1a" : "#AE1A1A",
-    ["--ag-header-foreground-color" as any]: "#ffffff",
-    ["--ag-odd-row-background-color" as any]: isDarkMode ? "#424242" : "#f5f5f5",
-    ["--ag-even-row-background-color" as any]: isDarkMode ? "#333333" : "#ffffff",
-    ["--ag-row-hover-color" as any]: isDarkMode ? "#4a4a4a" : "#e0e0e0",
-    ["--ag-foreground-color" as any]: isDarkMode ? "#ffffff" : "#000000",
-    ["--ag-background-color" as any]: isDarkMode ? "#333333" : "#ffffff",
-  };
+  /** If parent changes selectedCurrencies prop, update the form */
+  React.useEffect(() => {
+    methods.setValue("currencies", selectedCurrencies, {
+      shouldValidate: false,
+      shouldTouch: false,
+      shouldDirty: false,
+    });
+    const allSelected = selectedCurrencies.length === options.length;
+    methods.setValue("selectAllSwitch", allSelected, {
+      shouldValidate: false,
+      shouldTouch: false,
+      shouldDirty: false,
+    });
+  }, [selectedCurrencies, options.length, methods]);
 
   return (
-    <div
-      style={{
-        height,
-        overflow: "auto",
-        paddingRight: 5,
-        boxSizing: "border-box",
-      }}
-    >
-      {/* Optional quick filter box (remove if not needed) */}
-      <div style={{ marginBottom: 8 }}>
-        <input
-          placeholder="Quick filter…"
-          value={quickFilter}
-          onChange={(e) => setQuickFilter(e.target.value)}
-          style={{ width: 240, padding: 6 }}
+    <FormProvider {...methods}>
+      <Box className="currency-selector-container">
+        <SmuiMultiSelect<FormData>
+          name="currencies"
+          label="Select Currencies"
+          options={smuiOptions}
+          // custom tags renderer with "+X more"
+          renderTags={renderTags}
+          sx={{
+            "& .MuiAutocomplete-option": { minHeight: "24px" },
+            "& .MuiAutocomplete-inputRoot": { minHeight: "56px", padding: "8px 12px" },
+          }}
         />
-      </div>
 
-      <div
-        className={isDarkMode ? "ag-theme-alpine-dark" : "ag-theme-alpine"}
-        style={{ width: "100%", height: "100%", ...themeVars }}
-      >
-        <AgGridReact
-          rowData={rowDataMemo}
-          columnDefs={columnDefsMemo}
-          defaultColDef={defaultColDef}
-          gridOptions={gridOptions}
-          onGridReady={onGridReady}
-          sideBar={sideBarConfig}
-          rowGroupPanelShow="always"
-          loadingOverlayComponent={LoadingOverlayComponent}
-          noRowsOverlayComponent={NoRowsOverlayComponent}
-          getRowId={getRowId}
-          suppressDragLeaveHidesColumns
-        />
-      </div>
-    </div>
+        {/* Select All / Deselect All Toggle */}
+        <Box className="select-all-switch-container">
+          <SmuiSwitch<FormData>
+            name="selectAllSwitch"
+            left_label="Deselect All"
+            right_label="Select All"
+            handleChange={handleSwitchChange}
+          />
+        </Box>
+      </Box>
+    </FormProvider>
   );
 };
 
-export default AGGrid;
+export default CurrencySelector;
